@@ -1,0 +1,5 @@
+#pragma HLS INTERFACE m_axi depth=8 port=var offset=slave
+
+Xlink = Xlink()
+thing = Xlnk().cma_array(shape = 8, dtype = np.int32)
+/*mmio -> */ thing.physical_address

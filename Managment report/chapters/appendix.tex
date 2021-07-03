@@ -1,0 +1,357 @@
+\section{RMSE calculation code}
+\lstset{language=C++}
+\begin{lstlisting}
+#include <iostream>
+#include <iomanip>
+using namespace std;
+
+#include "window_fn_top.h"
+
+#ifdef FLOAT_DATA
+#define ABS_ERR_THRESH 0.0
+#else
+#define ABS_ERR_THRESH 0.001
+#endif
+
+#define WINDOW_FN_DEBUG 1
+
+int main(void)
+{
+   win_fn_in_t testdata[WIN_LEN];
+   win_fn_out_t hw_result[WIN_LEN];
+   float sw_result[WIN_LEN];
+   unsigned err_cnt = 0;
+
+   // Generate test vectors and expected (real valued) results
+   for (int i = 0; i < WIN_LEN; i++) {
+      float samp_i = 64.0;
+      // Use the coefficient calculation function from class for convenience
+      float win_i = xhls_window_fn::coef_calc<WIN_LEN,WIN_TYPE>(i);
+      testdata[i] = samp_i; // implicit conversion from float to ap_fixed<>
+      sw_result[i] = samp_i * win_i; // generate floating point expected values
+   }
+
+   // Run the DUT
+   window_fn_top(hw_result, testdata);
+
+   // Check results
+   cout << "Checking results against a tolerance of " << ABS_ERR_THRESH << endl;
+   cout << fixed << setprecision(5);
+   float sum = 0;
+   int count = 0;
+   for (unsigned i = 0; i < WIN_LEN; i++) {
+      float abs_err = float(hw_result[i]) - sw_result[i];
+      sum += abs_err * abs_err;
+      count ++;
+
+#if WINDOW_FN_DEBUG
+      cout << "i = " << i << "\thw_result = " << hw_result[i];
+      cout << "\t sw_result = " << sw_result[i] << endl;
+#endif
+      if (fabs(abs_err) > ABS_ERR_THRESH) {
+         cout << "Error threshold exceeded: i = " << i;
+         cout << "  Expected: " << sw_result[i];
+         cout << "  Got: " << hw_result[i];
+         cout << "  Delta: " << abs_err << endl;
+
+
+         err_cnt++;
+      }
+   }
+   cout << endl;
+
+   // Print final status message
+   if (err_cnt) {
+      cout << "!!! TEST FAILED - " << err_cnt;
+      cout << " results out of tolerance." << endl;
+   } else{
+      cout << "Test Passed" << endl;
+   }
+   // Only return 0 on success
+   cout << "RMSE " << sqrt(sum/count) << endl;
+   return err_cnt;
+}
+
+
+\end{lstlisting}
+
+\section{Dot-Product calculation code}
+\lstset{language=C++}
+\begin{lstlisting}
+
+
+#include "fir.h"
+
+void dotProduct(
+    data_t x[N],
+    data_t y[N],
+    data_t *output
+) {
+    data_t acc = 0;
+    int i;
+    Multloop: for(i=0; i < N; i++) {
+#pragma HLS UNROLL factor=20
+        acc += y[i]*x[i];
+    }
+    *output = acc;
+}
+
+
+\end{lstlisting}
+
+\section{Dot-Product test bench}
+\lstset{language=C++}
+\begin{lstlisting}
+
+#include <stdio.h>
+#include <math.h>
+#include "fir.h"
+
+int main () {
+  FILE         *fp;
+
+  data_t signal, output;
+  data_t progout = 0;
+  data_t x[N] = {5, 7, -3, -4};
+  data_t y[N] = {-2, 3, -5, 6};
+
+  int i;
+  
+  fp=fopen("out.dat","w");
+
+  dotProduct(x,y,&output);
+
+  for (i=0;i<=N;i++) {
+      progout = progout + (x[i]*y[i]);
+  }
+
+  fprintf(fp, "%i %i\n", progout, output);
+  fclose(fp);
+  
+  printf ("Comparing against output data \n");
+  if (system("diff -w out.dat out.gold.dat")) {
+
+    fprintf(stdout, "*******************************************\n");
+    fprintf(stdout, "FAIL: Output DOES NOT match the golden output\n");
+    fprintf(stdout, "*******************************************\n");
+     return 1;
+  } else {
+    fprintf(stdout, "*******************************************\n");
+    fprintf(stdout, "PASS: The output matches the golden output!\n");
+    fprintf(stdout, "*******************************************\n");
+     return 0;
+  }
+}
+
+\end{lstlisting}
+
+\section{Python binary counter}
+\lstset{language=Python}
+\begin{lstlisting}
+from time import sleep
+from pynq.overlays.base import BaseOverlay
+
+base = BaseOverlay("base.bit")
+
+Delay1 = 0.3
+Delay2 = 0.1
+color = 0
+rgbled_position = [4,5]
+
+for i in range(7):
+    for led in rgbled_position:
+        base.rgbleds[led].write(i)
+        base.rgbleds[led].write(i)
+    sleep(Delay2)
+
+for led in base.leds:
+    led.on()    
+while (base.buttons[3].read()==0):
+    if (base.buttons[0].read()==1):
+        color = (color+1) % 8
+        for led in rgbled_position:
+            base.rgbleds[led].write(color)
+            base.rgbleds[led].write(color)
+        sleep(Delay1)
+        
+    elif (base.buttons[1].read()==1): # LEDS Count-Up
+        for n in range(16):
+            for j in range(4):
+                base.leds[j].off()
+                
+            if (n >= 8):
+                base.leds[3].on()
+                n -= 8
+            if (n >= 4):
+                base.leds[2].on()
+                n -= 4
+            if (n >= 2):
+                base.leds[1].on()
+                n -= 2
+            if (n ==1):
+                base.leds[0].on()
+            sleep(Delay1)
+            
+        for j in range(4):
+                base.leds[j].off()
+            
+    elif (base.buttons[2].read()==1):
+        for led in reversed(base.leds):
+            led.off()
+        sleep(Delay2)
+        for led in reversed(base.leds):
+            led.toggle()
+            sleep(Delay2)                  
+    
+print('End of this demo ...')
+for led in base.leds:
+    led.off()
+for led in rgbled_position:
+    base.rgbleds[led].off()
+\end{lstlisting}
+
+\section{Horizontal Edge Detection}
+\lstset{language=C++}
+\begin{lstlisting}
+#include <ap_fixed.h>
+#include <ap_int.h>
+#include <stdint.h>
+#include <assert.h>
+
+typedef ap_uint<8> pixel_type;
+typedef ap_int<8> pixel_type_s;
+typedef ap_uint<96> u96b;
+typedef ap_uint<32> word_32;
+typedef ap_ufixed<8,0, AP_RND, AP_SAT> comp_type;
+typedef ap_fixed<10,2, AP_RND, AP_SAT> coeff_type;
+
+struct pixel_data {
+    pixel_type blue;
+    pixel_type green;
+    pixel_type red;
+};
+
+
+void template_filter(volatile uint32_t* in_data, volatile uint32_t* out_data, int w, int h, int parameter_1){
+#pragma HLS INTERFACE s_axilite port=return
+#pragma HLS INTERFACE s_axilite port=parameter_1
+#pragma HLS INTERFACE s_axilite port=w
+#pragma HLS INTERFACE s_axilite port=h
+
+#pragma HLS INTERFACE m_axi depth=2073600 port=in_data offset=slave // This will NOT work for resolutions higher than 1080p
+#pragma HLS INTERFACE m_axi depth=2073600 port=out_data offset=slave
+
+
+    int row [1920] = {0}; 
+
+    for (int y = 0; y < h; ++y) {
+
+        for (int x = 0; x < w; ++x) {
+
+            #pragma HLS PIPELINE II=1
+            #pragma HLS LOOP_FLATTEN off
+
+            unsigned int current = *in_data++;
+
+            unsigned char in_r = current & 0xFF;
+            unsigned char in_g = (current >> 8) & 0xFF;
+            unsigned char in_b = (current >> 16) & 0xFF;
+
+            unsigned char out_r = 0;
+            unsigned char out_b = 0;
+            unsigned char out_g = 0;
+
+            if (y>h/2){
+                float curr_gray = 0.2126f*in_r  + 0.7152f*in_g  + 0.0722f*in_b ;
+                int Y= abs(int(curr_gray)-row[x]);
+                row[x] = curr_gray;
+
+                out_r = Y;
+                out_b = Y;
+                out_g = Y;
+
+            }
+            else{
+                out_r = in_r;
+                out_g = in_g;
+                out_b = in_b;
+            }
+
+            unsigned int output = out_r | (out_g << 8) | (out_b << 16);
+            *out_data++ = output;
+
+        }
+
+    }
+
+}
+
+\end{lstlisting}
+
+\section{Javascript code for simple colour detection using the p5.js library.}
+\lstset{language=Java}
+\begin{lstlisting}
+
+var video, x, y, r, g, b, index, wr,wg,wb, slider;
+
+function setup() {
+ createCanvas(640, 480)
+ pixelDensity(1);
+ video = createCapture(VIDEO);
+ video.size(width, height);
+ slider = createSlider(0,1,0.1,0.05);
+ slider.position(width/1.4,height/1.2);
+ slider.style('width', '160px');
+
+ mode = 1;
+ 
+ wr = 1;
+ wg = 223/255;
+ wb = 196/255;//255,223,196
+}
+
+
+function draw() {
+ video.loadPixels();
+ //image(video, 0, 0);
+ background(0);
+ var val = slider.value();
+ find(val);
+}
+
+function mouseReleased() {
+  index = (mouseX + 1 + (mouseY * video.width)) * 4;
+  wr = 1;
+  wg = video.pixels[index + 1]/video.pixels[index + 0];
+  wb = video.pixels[index + 2]/video.pixels[index + 0];
+ console.log({wr,wg,wb});
+}
+
+function find(approx) {
+ var tx = 0;
+ var ty = 0;
+ var counter = 0;
+ for(y=0;y<video.height;y++) {
+  for(x=0;x<video.width;x++) {
+   index = (x + 1 + (y * video.width)) * 4;
+   r = video.pixels[index + 0];
+   g = video.pixels[index + 1];
+   b = video.pixels[index + 2];
+   
+   if(abs(g/r-wg)<approx && abs(b/r-wb)<approx) {
+    tx += x;
+    ty += y;
+    stroke(255)
+    point(x,y);
+    counter++;
+   }
+  }
+ }
+ tx /= counter;
+ ty /= counter;
+ noStroke();
+ fill(255,0,0);
+ //rect(tx,ty,50,50);
+}
+
+\end{lstlisting}
